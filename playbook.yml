@@ -1,5 +1,6 @@
 ---
-- hosts: web
+- hosts: ec2_instances
+  remote_user: ubuntu
   become: yes
   vars:
     repo_url: "git@github.com:omokarogabriel/my-port-folio.git"
