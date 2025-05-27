@@ -1,0 +1,98 @@
+---
+- hosts: web
+  become: yes
+  vars:
+    repo_url: "git@github.com:omokarogabriel/my-port-folio.git"
+    web_dir: "/var/www/html"
+    ssh_key_path: "/home/ubuntu/.ssh/id_rsa"
+    known_hosts_path: "/home/ubuntu/.ssh/known_hosts"
+    secret_id: "new_github_ssh_private_key"
+    ansible_python_interpreter: /usr/bin/python3
+
+  tasks:
+    - name: Ensure required packages are installed
+      apt:
+        name:
+          - apache2
+          - git
+          - awscli
+        update_cache: yes
+        state: present
+
+    - name: Ensure .ssh directory exists
+      file:
+        path: /home/ubuntu/.ssh
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0700'
+
+    - name: Fetch SSH key from AWS Secrets Manager
+      become_user: ubuntu
+      shell: >
+        aws secretsmanager get-secret-value --secret-id {{ secret_id }} --query SecretString --output text --region us-east-1
+      register: github_ssh_key
+      changed_when: false
+
+    - name: Write SSH private key
+      copy:
+        content: "{{ github_ssh_key.stdout }}"
+        dest: "{{ ssh_key_path }}"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0600'
+
+    - name: Add GitHub to known_hosts
+      become_user: ubuntu
+      shell: ssh-keyscan github.com
+      register: github_keyscan
+      changed_when: false
+
+    - name: Write known_hosts
+      copy:
+        content: "{{ github_keyscan.stdout }}"
+        dest: "{{ known_hosts_path }}"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Remove old web files
+      file:
+        path: "{{ web_dir }}"
+        state: absent
+
+    - name: Create web root directory
+      file:
+        path: "{{ web_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Clone application repository
+      become_user: ubuntu
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ web_dir }}"
+        key_file: "{{ ssh_key_path }}"
+        accept_hostkey: yes
+        update: yes
+        force: yes
+
+    - name: Remove .git directory
+      file:
+        path: "{{ web_dir }}/.git"
+        state: absent
+
+    - name: Fix ownership for web files
+      file:
+        path: "{{ web_dir }}"
+        owner: www-data
+        group: www-data
+        recurse: yes
+
+    - name: Start and enable apache2
+      service:
+        name: apache2
+        state: started
+        enabled: yes
